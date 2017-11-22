@@ -1,0 +1,416 @@
+<!doctype html>
+
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+
+  <title>Blynk test</title>
+  <meta name="description" content="">
+  <meta name="author" content="Original author Volodymyr Shymanskyy, modifications by Juha Pulliainen">
+
+  <style>
+    body {
+      font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #222;
+      color: #eee;
+      padding: 0;
+      margin: 0;
+    }
+
+    .footer {
+      padding: 10px;
+    }
+    a, a.visited, a:active, a:hover {
+      color: #368bda;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .devices{
+      padding: 10px;
+    }
+   
+    .device pre{
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      display: none;
+    }
+    .device {
+      display: inline-block;
+      border: 1px #363636 solid;
+      background-color: #303030;
+      padding: 5px;
+      margin: 5px;
+    }
+    .device .title{
+      font-size: 11px;
+      color: #999
+    }
+    .widget {
+      display: inline-block;
+      border: 1px #464646 solid;
+      background-color: #404040;
+      padding: 5px;
+      margin: 5px 1px 5px 1px;
+      vertical-align: top;
+      min-height: 40px;
+    }
+    .widget .label {
+      text-transform: uppercase;
+      font-size: 9px;
+    }
+    .widget .value {
+      font-family: monospace;
+      font-size: 20px;
+      font-weight: bold;
+      min-height: 20px;
+      margin-top: 3px;
+    }
+    .widget.LED .value {
+      margin-top: 6px;
+      width: 16px;
+      height: 16px;
+      min-height: 16px;
+      border-radius: 50%;
+    }
+    .widget.LED .value.off {
+      background-color: black;
+      color: #666;
+    }
+    .widget.LED .value.on {
+      background-color: yellow;
+      color: black;
+    }
+
+    #errorOutput {
+      color: #ff5555;
+    }
+
+    #app-title {
+      padding: 10px;
+      background-color: #0bf5c2;
+      color: black;
+      font-size: 20px;
+      padding-left: 16px;
+      
+    }
+
+  </style>
+  <!--[if lt IE 9]>
+  <script src="http://html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+  <![endif]-->
+</head>
+
+<body>
+
+  <div id="errorOutput" style="display: none;"></div>
+
+  <div id="app-title"></div>
+
+  <div id="devices">
+    <div id="device-template" style="display: none;">
+      <div class="device">
+        <div class="title">
+              <span class="text">
+                title here
+              </span>
+        </div>
+
+        <div class="content">
+          <pre class="text">
+              content here
+          </pre>
+        </div>
+
+        <div class="widgets">
+            <div id="LABELED_VALUE_DISPLAY-template" style="display: none;">
+                <div class="widget LABELED_VALUE_DISPLAY">
+                    <div class="label"></div>
+                    <div class="value"></div>
+                    <div class="pinType"></div>
+                    <div class="pin"></div>
+                </div>
+            </div>
+            <div id="LED-template" style="display: none;">
+                <div class="widget LED">
+                    <div class="label">LED</div>
+                    <div class="value"></div>
+                    <div class="pinType"></div>
+                    <div class="pin"></div>
+                </div>
+            </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer" style="margin-top: 40px">
+
+    <a onclick="toggleDebug()">Toggle debug</a>
+
+    <form id="control" action="">
+        ZeRGBa (V0): <label id="myZeRGBa">______</label><br>
+        Button (V1): <input id="myCheckbox" type="checkbox"><br>
+        <br>
+        Send notification: <input id="notify" type="text"> <input id="btn" type="button" value="Notify"><br><br>    
+        Server status: <label id="status"></label><br>
+        <textarea id="output" style="width:500px;height:300px;"></textarea><br>
+        <input id="clear" type="button" value="Clear"><br>
+      </form>
+  </div>
+
+  <script src="jquery.min.js"></script>
+  <script src="../../dist/blynk-browser.min.js"></script>
+  
+  <script type="text/javascript">
+  
+	hostNamefromParam = getQueryParam("host");
+	if (hostNamefromParam == "host"){
+		hostNamefromParam = null;
+	}
+  
+    var blynkConfig = {
+          host: hostNamefromParam || window.location.hostname,
+          port: '8080',
+          protocol: 'http',
+          websockets_path: '/websockets'
+      }
+
+    var project = {};
+    var blynks = [];
+    var syncList = [];
+    var connected = false;
+    var syncInterval;
+
+    function decimalToHexString(number)
+    {
+        if (number < 0)
+        {
+            number = 0xFFFFFFFF + number + 1;
+        }
+
+        return number.toString(16).toUpperCase();
+    }
+
+    function getQueryParam(param) {
+        location.search.substr(1)
+            .split("&")
+            .some(function(item) { // returns first occurence and stops
+                return item.split("=")[0] == param && (param = item.split("=")[1])
+            })
+        return param
+    }
+
+    var log = function(msg) {
+      var logOutput = $("#output");
+      logOutput.val(logOutput.val() + msg + "\n");
+      logOutput.scrollTop(logOutput[0].scrollHeight - logOutput.height());
+    }
+
+    var logError = function(msg) {
+      var errorOutput = $("#errorOutput");
+      errorOutput.html(errorOutput.html() + msg + "<br/>");
+      errorOutput.show();
+    }
+    
+    var syncVirtualPins = function(){
+      if (connected){
+        //console.log("Syncing virtual pins...");
+        for (var i in syncList){
+          syncList[i].blynk.syncVirtual(syncList[i].pinNumber)
+        }
+      }
+    }
+
+    var formatValue = function(value, formatting){
+      formatted = formatting.replace("pin", value);
+      var decimalPlaces = (formatting.match(/#/g) || []).length;
+      var suffix = formatting.split('/')[2];
+      return value.toFixed(decimalPlaces) + suffix;
+    }
+
+    var toggleDebug = function(e){
+      console.log("foo");
+      $("#control").toggle();
+    }
+
+    var initBlynk = function() {
+      var i = 0;
+      for(d in project.devices){
+        var device = project.devices[d];
+        //console.log(project.devices[d])
+        var blynk = new Blynk.Blynk(device.token, {
+          connector: new Blynk.WsClient({
+            addr: blynkConfig.host, port:blynkConfig.port, path: blynkConfig.websockets_path
+          })
+        });
+        blynk.device = device;
+        blynks.push(blynk);
+
+        if ( i > 0){
+          blynk.on('connect', function() {
+            var attachedDevice = this.device;
+            log("Device "+ attachedDevice.name + " ready.");
+          });
+          blynk.on('disconnect', function() {
+            log("Device disconnected.");
+          });
+
+          var widgets = project.widgets.filter(function(w){ if(w.deviceId == device.id){ return w };});
+
+          console.log("Adding device element");
+          console.log(device.name);
+          var deviceElem = $($('#device-template').html());
+          deviceElem.attr("data-id", device.id);
+          deviceElem.find('.title .text').html(device.name);
+          deviceElem.find('.content .text').html(JSON.stringify(device));
+          
+          //console.log("Creating " + widgets.length + " widget elements");
+          for (var w in widgets){
+            var widget = widgets[w];
+            //console.log(widget)
+            var widgetElem = $($('#'+widget.type+'-template').html());
+            //console.log(widgetElem)
+            widgetElem.find('.label').html(widget.label);
+            if (widget.type == "LED")
+            {
+              //widgetElem.addClass(widget.value == 255 ? "on" : "off");
+            } 
+            else 
+            {
+              widgetElem.find('.value').css("color", "#"+decimalToHexString(widget.color));
+
+              //widgetElem.find('.value').html(parseFloat(widget.value).toFixed(1));
+            }
+            if (widget.pinType == "VIRTUAL"){
+              // attach virtual pins to values
+              var pinNumber = parseInt(widget.pin)
+              var vpin = new blynk.VirtualPin(pinNumber);
+              vpin.device = device;
+              vpin.widget = widget;
+              vpin.widgetElem = widgetElem;
+              vpin.on('write', function(param) 
+              {
+                attachedWidget = this.widget;
+                attachedWidgetElem = this.widgetElem;
+                if (attachedWidget.type == "LED")
+                {
+                  var newValue = param[0] == "255" ? "on" : "off";
+                  var valueElem = attachedWidgetElem.find('.value')
+                  if (!valueElem.hasClass(newValue)){
+                    valueElem.removeClass("on");
+                    valueElem.removeClass("off");
+                    valueElem.addClass(newValue);
+                    if (newValue == "on"){
+                      valueElem.css("background-color", "#"+decimalToHexString(attachedWidget.color));
+                    } else {
+                      valueElem.css("background-color", "#000000");
+                    }
+                  }
+                } else {
+                  var newHtml =  formatValue(parseFloat(param[0]), attachedWidget.valueFormatting);
+                  if (attachedWidgetElem.find('.value').html() != newHtml){
+                    attachedWidgetElem.find('.value').html(newHtml);
+                  }
+                }
+              });
+              syncList.push({blynk: blynk, pinNumber: pinNumber});
+            }
+            deviceElem.find('.widgets').append(widgetElem);
+          }
+
+          $('#devices').append(deviceElem);
+        }
+        i++;
+      }
+
+      var web_ui = blynks[0];
+
+      $('#app-title').text(project.name)
+
+      var web_ui_v0 = new web_ui.VirtualPin(0);
+      var web_ui_v1 = new web_ui.VirtualPin(1);
+      
+      web_ui_v0.on('write', function(param) {
+        var r = param[0],
+            g = param[1],
+            b = param[2];
+        $('#myZeRGBa').css("background-color", "rgb(" + r + "," + g + "," + b + ")");
+        
+        log("ZeRGBa: " + r + "," + g + "," + b);
+      });
+      
+      web_ui_v1.on('write', function(param) {
+        var isChecked = (param[0] == 1);
+        $('#myCheckbox').prop('checked', isChecked);
+        log("web_ui_v1 write: " + param);
+      });
+
+      web_ui_v1.on('read', function(param) {
+        log("web_ui_v1 read: " + param);
+      });
+
+      $('#myCheckbox').change(function(){
+        web_ui_v1.write($(this).is(':checked') ? 1 : 0);
+      });
+            
+      $('#btn').click(function() {
+        var text = $('#notify').val();
+        web_ui.notify(text);
+      });
+      
+      $('#clear').click(function() {
+        $("#output").val("");
+      });
+
+      web_ui.on('connect', function() {
+        connected = true;
+        $("#status").text("Connected");
+        log("Web UI ready. Sending sync request...");
+        web_ui.syncAll();
+        setTimeout(function(){
+            if (connected){
+              syncInterval = setInterval(syncVirtualPins, 100);
+            }
+        }, 500);
+      });
+      web_ui.on('disconnect', function() {
+        connected = false;
+        $("#status").text("Disconnected");
+        log("Web UI disconnected.");
+        clearInterval(syncInterval);
+        syncInterval = null;
+      });
+    };
+
+    
+    $(function () {
+      $("#control").hide();
+      $("#output").val("");
+
+      authToken = getQueryParam('token');
+      console.log(authToken);
+      if (!blynkConfig.auth && (!authToken || authToken == "token")){
+        logError("Missing token. Please enter the Blynk token as a GET param 'token' in the URL.")
+        return;
+      }
+      blynkConfig.auth = authToken;
+
+      var blynkProjectUrl = blynkConfig.protocol + "://" + blynkConfig.host + ":" + blynkConfig.port + "/" +blynkConfig.auth+ "/project"
+      $.get(blynkProjectUrl)
+        .done( function(data){
+          console.log("Project metadata received")
+          console.log(data);
+          project = data;
+          initBlynk(blynkConfig);
+          
+        })
+        .fail( function(data){
+          console.log("Unable to get blynk project metadata from " + blynkProjectUrl);
+        });
+    });
+
+  </script>
+</body>
+</html>
